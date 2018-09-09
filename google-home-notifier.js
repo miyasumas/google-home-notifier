@@ -4,17 +4,24 @@ var mdns = require('mdns');
 var browser = mdns.createBrowser(mdns.tcp('googlecast'));
 var deviceAddress;
 var language;
+var volume;
 
 var device = function(name, lang = 'en') {
-    device = name;
-    language = lang;
-    return this;
+  device = name;
+  language = lang;
+  return this;
 };
 
 var ip = function(ip, lang = 'en') {
   deviceAddress = ip;
   language = lang;
   return this;
+}
+
+var volume = function(newVolume) {
+  if (0.0 <= newVolume && newVolume <= 1.0) {
+    volume = newVolume;
+  }
 }
 
 var googletts = require('google-tts-api');
@@ -75,14 +82,34 @@ var getSpeechUrl = function(text, host, callback) {
 };
 
 var getPlayUrl = function(url, host, callback) {
-    onDeviceUp(host, url, function(res){
-      callback(res)
-    });
+  onDeviceUp(host, url, function(res){
+    callback(res)
+  });
 };
 
 var onDeviceUp = function(host, url, callback) {
   var client = new Client();
+  var orgVolume;
+
+  var closeClient = function() {
+    if (orgVolume) {
+      client.setVolume(orgVolume, function() {
+        client.close();
+      });
+    } else {
+      client.close();
+    }
+  };
+
   client.connect(host, function() {
+    if (volume) {
+      client.getVolume(function(err, vol) {
+        orgVolume = vol;
+        client.setVolume({level: volume}, function(err, vol) {
+        });
+      });
+    }
+
     client.launch(DefaultMediaReceiver, function(err, player) {
 
       var media = {
@@ -91,15 +118,30 @@ var onDeviceUp = function(host, url, callback) {
         streamType: 'BUFFERED' // or LIVE
       };
       player.load(media, { autoplay: true }, function(err, status) {
-        client.close();
-        callback('Device notified');
+        if (err) {
+          console.log('Error: %s', err.message);
+          closeClient();
+          callback('error');
+        }
+        player.on('status', function(status) {
+          switch(status.playerState) {
+          case 'BUFFERING':
+          case 'PLAYING':
+            break; // do nothing
+          default:
+            // Finished. Restore volume level.
+            closeClient();
+            callback('Device notified');
+            break;
+          }
+        });
       });
     });
   });
 
   client.on('error', function(err) {
     console.log('Error: %s', err.message);
-    client.close();
+    closeClient();
     callback('error');
   });
 };
@@ -109,3 +151,4 @@ exports.device = device;
 exports.accent = accent;
 exports.notify = notify;
 exports.play = play;
+exports.volume = volume;
